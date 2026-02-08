@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import IntEnum
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 
@@ -34,7 +35,7 @@ class NetworkState:
     p_pump: float
 
 
-@dataclasses(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True)
 class ThermalResult:
     """
     Output of thermal simulation.
