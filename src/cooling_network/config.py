@@ -19,3 +19,12 @@ UNFAVORED_TTL = 200
 
 # pumping pressure maintenance
 NR_RECOMPUTE_PRESSURE = 20
+
+# simplified constraints (contest-like)
+T_MAX = 80.0
+GRAD_T_MAX = 25.0
+
+# stopping
+MAX_REJECT_STREAK = 60
+TAU_RADIUS = 4 
+RNG_SEED = 42
