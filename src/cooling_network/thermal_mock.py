@@ -1,5 +1,4 @@
 from collections import deque
-
 import numpy as np
 
 from src.cooling_network.grid import CoolingNetwork
@@ -8,7 +7,7 @@ from src.cooling_network.types import ThermalResult
 
 def distance_to_active(net: CoolingNetwork) -> np.ndarray:
     n, m = net.C.shape
-    dist = np.full((n,m), fill_value=10**9, dtype=np.int32)
+    dist = np.full((n, m), fill_value=10**9, dtype=np.int32)
 
     q = deque()
     for i in range(n):
@@ -27,17 +26,16 @@ def distance_to_active(net: CoolingNetwork) -> np.ndarray:
 
     return dist
 
+
 def simulate_temperature(
-        net: CoolingNetwork,
-        power: np.ndarray,
-        t_amb: float = 25.0,
-        k_cool: float = 1.0,
-        eps: float = 1e-9
+    net: CoolingNetwork,
+    power: np.ndarray,
+    t_amb: float = 25.0,
+    beta: float = 0.4,
 ) -> ThermalResult:
     dist = distance_to_active(net).astype(np.float64)
 
-    denom = 1.0 + k_cool * dist
-    T = t_amb + power / (denom + eps)
+    T = t_amb + power * (1.0 + beta * dist)
 
     max_T = float(np.max(T))
     grad_T = max_T - float(np.min(T))

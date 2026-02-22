@@ -7,8 +7,8 @@ ALPHA_2 = 1.11
 
 # pruning acceptance / safety
 DELTA_C = 0.2
-LAMBDA = 0.045
-EPC_C = 0.2
+LAMBDA = 0.8
+EPC_C = 1.0
 
 # HBS selection
 SIGMA_HBS = 2.5
