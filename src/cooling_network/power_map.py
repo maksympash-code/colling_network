@@ -1,17 +1,17 @@
 import numpy as np
 
 
-def make_power_map(
-        n: int,
-        hotspots = None,
-        base: float = 1.0,
-        hot: float = 50.0
+def make_power_map_from_areal_density(
+    n: int,
+    dx: float,
+    dy: float,
+    base_w_per_cm2: float = 10.0,     # базова щільність
+    hot_w_per_cm2: float = 200.0      # hotspot щільність
 ) -> np.ndarray:
-    P = np.full((n, n), fill_value=base, dtype=np.float64)
-    if hotspots is None:
-        hotspots = [(n // 2, n // 2)]
+    # W/cm^2 -> W/m^2
+    base = base_w_per_cm2 * 1e4
+    hot = hot_w_per_cm2 * 1e4
 
-    for (i, j) in hotspots:
-        P[i, j] += hot
-
+    P = np.full((n, n), base * dx * dy, dtype=np.float64)
+    P[n // 2, n // 2] = hot * dx * dy
     return P
