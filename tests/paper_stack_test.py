@@ -27,7 +27,7 @@ def make_test_params() -> ModelParams:
 
 
 def main():
-    n = 31
+    n = 10
     net = make_simple_net(n)
     params = make_test_params()
 

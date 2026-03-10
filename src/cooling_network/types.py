@@ -53,10 +53,14 @@ class ThermalResult:
 class PruneStepResult:
     """
     Output of one pruning attempt.
-    removed_cell: which cell was tentatively removed (LIQUID -> SILICON), if any
-    accepted: whether we actually keep this removal
-    thermal: thermal result after this step (or after tentative removal)
+    removed_cell: which cell was tentatively removed
+    accepted: whether removal was accepted
+    thermal: thermal result after this step
+    E_pump: pumping energy after this step
+    P_pump: pumping pressure after this step
     """
     removed_cell: Optional[Index2D]
     accepted: bool
     thermal: ThermalResult
+    E_pump: float
+    P_pump: float

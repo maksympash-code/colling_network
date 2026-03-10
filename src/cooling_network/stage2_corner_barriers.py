@@ -1,12 +1,44 @@
-from typing import Iterable
+from __future__ import annotations
 
-def hotspots_near_center_by_ratio(hot_mask: np.ndarray, center_frac: float = 0.25, ratio_thr: float = 0.35) -> bool:
+from dataclasses import dataclass
+from typing import Iterable, List, Optional, Tuple
+
+import numpy as np
+
+from src.cooling_network.grid import CoolingNetwork
+from src.cooling_network.types import CellType, ThermalResult
+from src.cooling_network.stage2_straight_channels import (
+    stage2_straight_channels,
+    hotspots_mask,
+)
+
+Index2D = Tuple[int, int]
+IOQ = Tuple[int, int, int, int]
+
+
+@dataclass(frozen=True)
+class Stage2FullResult:
+    net: CoolingNetwork
+    thermal_before: ThermalResult
+    thermal_after_straight: ThermalResult
+    thermal_after_barriers: Optional[ThermalResult]
+    accepted_areas: int
+    barrier_params: Optional[List[Tuple[int, int]]]
+
+
+def hotspots_near_center_by_ratio(
+    hot_mask: np.ndarray,
+    center_frac: float = 0.25,
+    ratio_thr: float = 0.35,
+) -> bool:
     """
-    center_frac=0.25 -> central square [0.25N,0.75N]×[0.25N,0.75N]
-    ratio_thr=0.35 -> якщо >=35% всіх hotspots лежить у центрі -> вмикаємо barriers.
+    If at least ratio_thr of hotspot cells lie in the central square,
+    we enable corner barriers.
     """
     n, m = hot_mask.shape
-    assert n == m
+    if n != m:
+        return False
+
     total = int(np.sum(hot_mask))
     if total == 0:
         return False
@@ -19,7 +51,8 @@ def hotspots_near_center_by_ratio(hot_mask: np.ndarray, center_frac: float = 0.2
 
 def paint_silicon_if_liquid(net: CoolingNetwork, cells: Iterable[Index2D]) -> None:
     """
-    Convert LIQUID -> SILICON for given cells; do not touch TSV/INLET/OUTLET.
+    Convert LIQUID -> SILICON for given cells.
+    Do not touch TSV / INLET / OUTLET.
     """
     C = net.C
     for i, j in cells:
@@ -31,47 +64,51 @@ def paint_silicon_if_liquid(net: CoolingNetwork, cells: Iterable[Index2D]) -> No
             C[i, j] = CellType.SILICON
 
 
-def barrier_cells_for_corner(n: int, corner_id: int, length: int, theta_deg: int, thickness: int = 1) -> List[Index2D]:
+def barrier_cells_for_corner(
+    n: int,
+    corner_id: int,
+    length: int,
+    theta_deg: int,
+    thickness: int = 1,
+) -> List[Index2D]:
     """
-    Discretized corner barrier as a ray going into the chip with slope angle theta.
-    angle is measured from horizontal axis toward vertical, in [0..90].
+    Discretized corner barrier as a ray going into the chip.
+
     corner_id:
-      0 = top-left, 1 = top-right, 2 = bottom-left, 3 = bottom-right
+      0 = top-left
+      1 = top-right
+      2 = bottom-left
+      3 = bottom-right
     """
     theta = np.deg2rad(theta_deg)
-    # direction components in "interior" (positive magnitude)
     di = float(np.sin(theta))
     dj = float(np.cos(theta))
 
-    # sign depending on corner
-    if corner_id == 0:      # TL: +i, +j
+    if corner_id == 0:      # TL
         si, sj = +1, +1
         ci, cj = 0, 0
-    elif corner_id == 1:    # TR: +i, -j
+    elif corner_id == 1:    # TR
         si, sj = +1, -1
         ci, cj = 0, n - 1
-    elif corner_id == 2:    # BL: -i, +j
+    elif corner_id == 2:    # BL
         si, sj = -1, +1
         ci, cj = n - 1, 0
-    else:                   # BR: -i, -j
+    else:                   # BR
         si, sj = -1, -1
         ci, cj = n - 1, n - 1
 
     cells: List[Index2D] = []
-
-    # accumulate along the ray
     x = 0.0
     y = 0.0
-    for t in range(length):
+
+    for _ in range(length):
         ii = int(round(ci + si * x))
         jj = int(round(cj + sj * y))
         cells.append((ii, jj))
 
-        # thickness: paint a small perpendicular cross (cheap and effective)
         for k in range(1, thickness):
-            # perpendicular approx: swap components
-            cells.append((ii + k * (-sj), jj + k * (si)))
-            cells.append((ii - k * (-sj), jj - k * (si)))
+            cells.append((ii + k * (-sj), jj + k * si))
+            cells.append((ii - k * (-sj), jj - k * si))
 
         x += di
         y += dj
@@ -79,15 +116,24 @@ def barrier_cells_for_corner(n: int, corner_id: int, length: int, theta_deg: int
     return cells
 
 
-def apply_corner_barriers(net: CoolingNetwork, params: List[Tuple[int, int]], thickness: int = 1) -> None:
+def apply_corner_barriers(
+    net: CoolingNetwork,
+    params: List[Tuple[int, int]],
+    thickness: int = 1,
+) -> None:
     """
     params: list of 4 tuples (length, theta_deg) for corners [TL, TR, BL, BR]
     """
     n, _ = net.C.shape
     for corner_id, (L, theta) in enumerate(params):
-        cells = barrier_cells_for_corner(n, corner_id, length=L, theta_deg=theta, thickness=thickness)
+        cells = barrier_cells_for_corner(
+            n=n,
+            corner_id=corner_id,
+            length=L,
+            theta_deg=theta,
+            thickness=thickness,
+        )
         paint_silicon_if_liquid(net, cells)
-
 
 
 def optimize_corner_barriers(
@@ -99,8 +145,8 @@ def optimize_corner_barriers(
     thickness: int = 1,
 ) -> List[Tuple[int, int]]:
     """
-    Returns best per-corner params [(L,theta)] for 4 corners.
-    Step 1 (paper-like): choose best (L,theta) for each corner individually (min max_T).
+    Choose best (L, theta) for each corner independently.
+    Criterion: minimal max_T.
     """
     best_params: List[Tuple[int, int]] = []
 
@@ -111,12 +157,14 @@ def optimize_corner_barriers(
         for L in length_candidates:
             for theta in theta_candidates:
                 net = base_net.clone()
-                apply_corner_barriers(net, params=[
-                    (0, 45), (0, 45), (0, 45), (0, 45)   # dummy, will override one corner
-                ], thickness=thickness)
 
-                # apply only current corner
-                cells = barrier_cells_for_corner(net.C.shape[0], corner_id, L, theta, thickness)
+                cells = barrier_cells_for_corner(
+                    n=net.C.shape[0],
+                    corner_id=corner_id,
+                    length=L,
+                    theta_deg=theta,
+                    thickness=thickness,
+                )
                 paint_silicon_if_liquid(net, cells)
 
                 net.prune_irregular()
@@ -128,9 +176,11 @@ def optimize_corner_barriers(
                     best_max = res.max_T
                     best = (L, theta)
 
-        # fallback if nothing feasible
         if best is None:
-            best = (length_candidates[len(length_candidates)//2], theta_candidates[len(theta_candidates)//2])
+            best = (
+                length_candidates[len(length_candidates) // 2],
+                theta_candidates[len(theta_candidates) // 2],
+            )
 
         best_params.append(best)
 
@@ -146,8 +196,7 @@ def line_search_lengths(
     thickness: int = 1,
 ) -> List[Tuple[int, int]]:
     """
-    Paper-like simplification of line search: scale all 4 lengths together, keep thetas.
-    Choose the scale that minimizes max_T.
+    Scale all 4 barrier lengths together, keep angles fixed.
     """
     best = per_corner_params
     best_max = float("inf")
@@ -161,6 +210,7 @@ def line_search_lengths(
         net = base_net.clone()
         apply_corner_barriers(net, params=params, thickness=thickness)
         net.prune_irregular()
+
         if not net.has_inlet_to_outlet_path():
             continue
 
@@ -170,3 +220,112 @@ def line_search_lengths(
             best = params
 
     return best
+
+
+def stage2_full_patterning(
+    net: CoolingNetwork,
+    power_map: np.ndarray,
+    thermal_fn,
+    alpha_1: float,
+    alpha_2: float,
+    io_q: IOQ,
+) -> Stage2FullResult:
+    """
+    Full Stage 2:
+      1) straight-channel patterning
+      2) if hotspots are central enough -> corner barriers
+      3) accept barriers only if they improve max_T
+    """
+    s1 = stage2_straight_channels(
+        net=net,
+        power_map=power_map,
+        thermal_fn=thermal_fn,
+        alpha_1=alpha_1,
+        io_q=io_q,
+        pad=max(1, net.C.shape[0] // 12),
+        stripe_candidates=(1, 2, 3),
+        thickness_candidates=(1, 2),
+    )
+
+    current_net = s1.net
+    current_thermal = s1.thermal_after
+
+    hot2 = hotspots_mask(current_thermal.T, alpha_2)
+    if not hotspots_near_center_by_ratio(hot2):
+        return Stage2FullResult(
+            net=current_net,
+            thermal_before=s1.thermal_before,
+            thermal_after_straight=s1.thermal_after,
+            thermal_after_barriers=None,
+            accepted_areas=s1.accepted_areas,
+            barrier_params=None,
+        )
+
+    n = current_net.C.shape[0]
+    length_candidates = sorted(set([
+        max(1, n // 8),
+        max(1, n // 6),
+        max(1, n // 4),
+    ]))
+    theta_candidates = [25, 40, 55, 70]
+
+    params0 = optimize_corner_barriers(
+        base_net=current_net,
+        power_map=power_map,
+        thermal_fn=thermal_fn,
+        length_candidates=length_candidates,
+        theta_candidates=theta_candidates,
+        thickness=1,
+    )
+
+    params1 = line_search_lengths(
+        base_net=current_net,
+        power_map=power_map,
+        thermal_fn=thermal_fn,
+        per_corner_params=params0,
+        scales=[0.75, 1.0, 1.25],
+        thickness=1,
+    )
+
+    cand = current_net.clone()
+    apply_corner_barriers(cand, params=params1, thickness=1)
+    cand.prune_irregular()
+
+    if not cand.has_inlet_to_outlet_path():
+        return Stage2FullResult(
+            net=current_net,
+            thermal_before=s1.thermal_before,
+            thermal_after_straight=s1.thermal_after,
+            thermal_after_barriers=None,
+            accepted_areas=s1.accepted_areas,
+            barrier_params=None,
+        )
+
+    therm_bar = thermal_fn(cand, power_map)
+
+    better = (
+        therm_bar.max_T < current_thermal.max_T - 1e-6
+        or (
+            abs(therm_bar.max_T - current_thermal.max_T) <= 1e-6
+            and therm_bar.grad_T < current_thermal.grad_T
+        )
+    )
+
+    if better:
+        return Stage2FullResult(
+            net=cand,
+            thermal_before=s1.thermal_before,
+            thermal_after_straight=s1.thermal_after,
+            thermal_after_barriers=therm_bar,
+            accepted_areas=s1.accepted_areas,
+            barrier_params=params1,
+        )
+
+    return Stage2FullResult(
+        net=current_net,
+        thermal_before=s1.thermal_before,
+        thermal_after_straight=s1.thermal_after,
+        thermal_after_barriers=None,
+        accepted_areas=s1.accepted_areas,
+        barrier_params=None,
+    )

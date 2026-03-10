@@ -34,47 +34,70 @@ def generate_16_patterns() -> List[IOPattern]:
 
 def apply_io_pattern(net: CoolingNetwork, pattern: IOPattern) -> CoolingNetwork:
     """
-    Apply I/O to a *copy* of net.
-    We assume only one channel layer for simplified model.
+    Apply I/O only on the OUTER boundary of the whole layer.
+    Four quadrants are used only to choose which OUTER edge segment
+    gets inlet/outlet.
 
-    We place continuous inlets/outlets at the boundary segments of each quadrant.
+    mode == 0 : horizontal flow
+        TL -> inlet on LEFT(top half), outlet on TOP(left half)
+        TR -> inlet on TOP(right half), outlet on RIGHT(top half)
+        BL -> inlet on LEFT(bottom half), outlet on BOTTOM(left half)
+        BR -> inlet on BOTTOM(right half), outlet on RIGHT(bottom half)
+
+    mode == 1 : swapped orientation
+        TL -> inlet on TOP(left half), outlet on LEFT(top half)
+        TR -> inlet on RIGHT(top half), outlet on TOP(right half)
+        BL -> inlet on BOTTOM(left half), outlet on LEFT(bottom half)
+        BR -> inlet on RIGHT(bottom half), outlet on BOTTOM(right half)
     """
     new_net = net.clone()
     C = new_net.C
     n, m = C.shape
     assert n == m, "for simplicity assume square grid"
 
-    # Clear previous inlet/outlet tags (keep LIQUID/SILICON/TSV)
+    # clear previous inlet/outlet tags
     C[(C == CellType.INLET) | (C == CellType.OUTLET)] = CellType.LIQUID
 
     mid = n // 2
 
-    # Quadrant bounds: [0,mid) x [0,mid), etc.
-    quads = [
-        (0, mid, 0, mid),     # TL
-        (0, mid, mid, n),     # TR
-        (mid, n, 0, mid),     # BL
-        (mid, n, mid, n),     # BR
-    ]
+    def mark_if_liquid(i: int, j: int, tag: CellType):
+        if C[i, j] == CellType.LIQUID:
+            C[i, j] = tag
 
-    for qi, (r0, r1, c0, c1) in enumerate(quads):
+    # segments on OUTER boundary only
+    top_left = [(0, j) for j in range(0, mid)]
+    top_right = [(0, j) for j in range(mid, n)]
+    bottom_left = [(n - 1, j) for j in range(0, mid)]
+    bottom_right = [(n - 1, j) for j in range(mid, n)]
+
+    left_top = [(i, 0) for i in range(0, mid)]
+    left_bottom = [(i, 0) for i in range(mid, n)]
+    right_top = [(i, n - 1) for i in range(0, mid)]
+    right_bottom = [(i, n - 1) for i in range(mid, n)]
+
+    quadrant_edges = {
+        0: (left_top, top_left),        # TL
+        1: (top_right, right_top),      # TR
+        2: (left_bottom, bottom_left),  # BL
+        3: (bottom_right, right_bottom) # BR
+    }
+
+    for qi in range(4):
+        edge_a, edge_b = quadrant_edges[qi]
         mode = pattern.q[qi]
 
         if mode == 0:
-            # inlet on left edge of the quadrant boundary, outlet on right edge
-            # Left boundary column = c0, right boundary column = c1-1
-            for r in range(r0, r1):
-                if C[r, c0] == CellType.LIQUID:
-                    C[r, c0] = CellType.INLET
-                if C[r, c1 - 1] == CellType.LIQUID:
-                    C[r, c1 - 1] = CellType.OUTLET
+            inlet_segment = edge_a
+            outlet_segment = edge_b
         else:
-            # inlet on top edge, outlet on bottom edge
-            for c in range(c0, c1):
-                if C[r0, c] == CellType.LIQUID:
-                    C[r0, c] = CellType.INLET
-                if C[r1 - 1, c] == CellType.LIQUID:
-                    C[r1 - 1, c] = CellType.OUTLET
+            inlet_segment = edge_b
+            outlet_segment = edge_a
+
+        for (i, j) in inlet_segment:
+            mark_if_liquid(i, j, CellType.INLET)
+
+        for (i, j) in outlet_segment:
+            mark_if_liquid(i, j, CellType.OUTLET)
 
     return new_net
 
